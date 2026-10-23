@@ -1,43 +1,54 @@
-import argparse
+# Zeta Scalper Trading Robot
 
-from .backtest import run_backtest
-from .config import StrategyConfig
-from .data import fetch_market_data
+This project is a Python-based educational scalping trading bot with a mock market-data backtester and a broker/exchange interface for future live deployment.
 
+## Features
+- EMA + RSI scalping logic
+- Backtesting engine
+- Paper trading mode
+- Broker adapter framework for live exchange APIs
+- Binance Future API adapter
+- Risk and order controls
 
-def build_parser():
-    parser = argparse.ArgumentParser(description="Zeta Scalper trading robot")
-    parser.add_argument("--mode", choices=["backtest", "paper"], default="backtest")
-    parser.add_argument("--symbol", default="BTCUSDT")
-    parser.add_argument("--limit", type=int, default=500)
-    parser.add_argument("--use_mock", action="store_true", default=True)
-    return parser
+## Installation
 
+```bash
+pip install -r requirements.txt
+```
 
-def main():
-    args = build_parser().parse_args()
+## Quick start
 
-    config = StrategyConfig(symbol=args.symbol)
-    data = fetch_market_data(symbol=config.symbol, timeframe=config.timeframe, limit=args.limit, use_mock=args.use_mock)
+### Backtest mode
 
-    if args.mode == "backtest":
-        metrics, trades, df = run_backtest(data, config)
-        print("Backtest results")
-        print(f"Initial cash: ${metrics['initial_cash']:.2f}")
-        print(f"Final value: ${metrics['final_value']:.2f}")
-        print(f"Total PnL: ${metrics['total_pnl']:.2f}")
-        print(f"Return: {metrics['return_pct']:.2f}%")
-        print(f"Trades: {metrics['total_trades']}")
-        print(f"Win rate: {metrics['win_rate']:.2f}%")
-        print("Last 5 trades:")
-        for trade in trades[-5:]:
-            print(trade)
+```bash
+python -m zeta_scalper.cli --mode backtest --symbol BTCUSDT --limit 500 --use_mock
+```
 
-    else:
-        from .paper_trade import PaperTrader
-        bot = PaperTrader(config=config, market_data=data)
-        bot.run(limit=args.limit, use_mock=args.use_mock)
+### Paper trading mode
 
+```bash
+python -m zeta_scalper.cli --mode paper --symbol BTCUSDT --limit 500 --use_mock
+```
 
-if __name__ == "__main__":
-    main()
+### Live trading mode
+
+Set your broker credentials before running live mode:
+
+```bash
+export BROKER_API_KEY="your_api_key"
+export BROKER_API_SECRET="your_api_secret"
+python -m zeta_scalper.cli --mode live --broker binance --symbol BTCUSDT --live-trading --dry-run --testnet
+```
+
+Important:
+- `--dry-run` prevents live order placement.
+- `--live-trading` enables actual order sending only when you are ready.
+- Testnet is enabled by default for safety.
+
+## Broker support
+
+The adapter is designed to work with Binance Futures endpoints. You can extend it to other brokers by creating a new implementation of `BrokerAdapter`.
+
+## Risk warning
+
+This project is for learning and evaluation only. It is not a guaranteed money-making system. Real trading carries market risk and should only be done with a clear risk plan, testnet validation, and responsible capital allocation.
