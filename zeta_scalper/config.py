@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 
 
@@ -29,3 +30,21 @@ class StrategyConfig:
     alert_channel: str = "console"
     market_data_source: str = "mock"
     extra: dict = field(default_factory=dict)
+
+    def validate(self):
+        if not self.symbol:
+            raise ValueError("symbol cannot be empty")
+        if self.initial_cash <= 0:
+            raise ValueError("initial_cash must be > 0")
+        if self.stop_loss_pct <= 0 or self.take_profit_pct <= 0:
+            raise ValueError("stop_loss_pct and take_profit_pct must be > 0")
+        if self.live_trading and not self.api_key and not os.getenv("BROKER_API_KEY"):
+            raise ValueError("Live trading requires BROKER_API_KEY or StrategyConfig.api_key")
+        if self.live_trading and not self.api_secret and not os.getenv("BROKER_API_SECRET"):
+            raise ValueError("Live trading requires BROKER_API_SECRET or StrategyConfig.api_secret")
+
+    def apply_env(self):
+        self.api_key = self.api_key or os.getenv("BROKER_API_KEY", "")
+        self.api_secret = self.api_secret or os.getenv("BROKER_API_SECRET", "")
+        self.broker_name = self.broker_name or os.getenv("BROKER_NAME", "binance")
+        self.broker_testnet = self.broker_testnet if os.getenv("BROKER_TESTNET") is None else os.getenv("BROKER_TESTNET", "true").lower() == "true"

@@ -21,6 +21,8 @@ class BrokerAdapter:
         url = f"{self.base_url}{path}"
         request_params = dict(params or {})
         if auth:
+            if not self.config.api_key or not self.config.api_secret:
+                raise ValueError("Missing API credentials for authenticated broker request.")
             request_params["timestamp"] = int(time.time() * 1000)
             request_params["recvWindow"] = 5000
             query = urlencode(request_params)
@@ -30,11 +32,15 @@ class BrokerAdapter:
                 hashlib.sha256,
             ).hexdigest()
             request_params["signature"] = signature
+            self.session.headers.update({"X-MBX-APIKEY": self.config.api_key})
             url = f"{url}?{query}&signature={signature}"
 
         response = self.session.request(method, url, params=None, json=json_body, timeout=self.config.order_timeout_seconds)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        if "code" in data and data["code"] != 200:
+            raise RuntimeError(f"Broker error: {data}")
+        return data
 
     def get_account_balance(self):
         raise NotImplementedError
@@ -59,9 +65,6 @@ class BinanceBroker(BrokerAdapter):
         return "https://fapi.binance.com"
 
     def _signed_request(self, method, path, params=None, json_body=None):
-        if not self.config.api_key or not self.config.api_secret:
-            raise ValueError("Binance live trading requires an API key and secret.")
-        self.session.headers.update({"X-MBX-APIKEY": self.config.api_key})
         return self._request(method, path, params=params, json_body=json_body, auth=True)
 
     def get_account_balance(self):
@@ -71,11 +74,13 @@ class BinanceBroker(BrokerAdapter):
         return self._request("GET", "/fapi/v1/ticker/price", params={"symbol": symbol.upper()})
 
     def place_market_order(self, symbol, side, quantity):
+        if quantity <= 0:
+            raise ValueError("Order quantity must be greater than zero.")
         payload = {
             "symbol": symbol.upper(),
             "side": side.upper(),
             "type": "MARKET",
-            "quantity": quantity,
+            "quantity": float(quantity),
         }
         return self._signed_request("POST", "/fapi/v1/order", params=payload)
 

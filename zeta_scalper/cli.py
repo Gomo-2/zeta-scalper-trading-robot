@@ -37,6 +37,8 @@ def main():
         live_trade_quantity=args.quantity,
         dry_run=args.dry_run,
     )
+    config.apply_env()
+    config.validate()
 
     data = fetch_market_data(
         symbol=config.symbol,
@@ -65,7 +67,7 @@ def main():
 
     else:
         if not config.api_key or not config.api_secret:
-            raise ValueError("For live mode, set BROKER_API_KEY and BROKER_API_SECRET or pass --api-key and --api-secret.")
+            raise ValueError("For live mode set BROKER_API_KEY and BROKER_API_SECRET or pass --api-key and --api-secret.")
         broker = get_broker(config)
         run_live_strategy(config, broker)
 
