@@ -1,76 +1,112 @@
-import argparse
-import os
+import pandas as pd
 
-from .backtest import run_backtest
-from .broker import get_broker
 from .config import StrategyConfig
-from .data import fetch_market_data
-from .live import run_live_strategy
+from .indicators import ema, rsi
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(description="Zeta Scalper trading robot")
-    parser.add_argument("--mode", choices=["backtest", "paper", "live"], default="backtest")
-    parser.add_argument("--symbol", default="BTCUSDT")
-    parser.add_argument("--limit", type=int, default=500)
-    parser.add_argument("--use_mock", action="store_true", default=True)
-    parser.add_argument("--broker", choices=["binance"], default="binance")
-    parser.add_argument("--live-trading", action="store_true", default=False)
-    parser.add_argument("--dry-run", action="store_true", default=True)
-    parser.add_argument("--testnet", action="store_true", default=True)
-    parser.add_argument("--api-key", default=os.getenv("BROKER_API_KEY", ""))
-    parser.add_argument("--api-secret", default=os.getenv("BROKER_API_SECRET", ""))
-    parser.add_argument("--quantity", type=float, default=0.0)
-    return parser
+def _compute_swing_levels(df: pd.DataFrame, lookback: int = 20):
+    recent_high = df["High"].rolling(window=lookback, min_periods=lookback).max()
+    recent_low = df["Low"].rolling(window=lookback, min_periods=lookback).min()
+    return recent_high, recent_low
 
 
-def main():
-    args = build_parser().parse_args()
+def generate_ema_rsi_signals(df: pd.DataFrame, config: StrategyConfig) -> pd.DataFrame:
+    working = df.copy()
+    working["ema_fast"] = ema(working["Close"], config.fast_ema)
+    working["ema_slow"] = ema(working["Close"], config.slow_ema)
+    working["rsi"] = rsi(working["Close"], config.rsi_period)
 
-    config = StrategyConfig(
-        symbol=args.symbol,
-        broker_name=args.broker,
-        broker_testnet=args.testnet,
-        api_key=args.api_key,
-        api_secret=args.api_secret,
-        live_trading=args.live_trading,
-        live_trade_quantity=args.quantity,
-        dry_run=args.dry_run,
-    )
-    config.apply_env()
-    config.validate()
+    working["signal"] = 0
+    for i in range(1, len(working)):
+        prev = working.iloc[i - 1]
+        curr = working.iloc[i]
 
-    data = fetch_market_data(
-        symbol=config.symbol,
-        timeframe=config.timeframe,
-        limit=args.limit,
-        use_mock=args.use_mock,
-    )
+        bullish_cross = prev["ema_fast"] <= prev["ema_slow"] and curr["ema_fast"] > curr["ema_slow"]
+        bearish_cross = prev["ema_fast"] >= prev["ema_slow"] and curr["ema_fast"] < curr["ema_slow"]
 
-    if args.mode == "backtest":
-        metrics, trades, _ = run_backtest(data, config)
-        print("Backtest results")
-        print(f"Initial cash: ${metrics['initial_cash']:.2f}")
-        print(f"Final value: ${metrics['final_value']:.2f}")
-        print(f"Total PnL: ${metrics['total_pnl']:.2f}")
-        print(f"Return: {metrics['return_pct']:.2f}%")
-        print(f"Trades: {metrics['total_trades']}")
-        print(f"Win rate: {metrics['win_rate']:.2f}%")
-        print("Last 5 trades:")
-        for trade in trades[-5:]:
-            print(trade)
+        if bullish_cross and curr["rsi"] >= config.rsi_buy_threshold:
+            working.at[working.index[i], "signal"] = 1
+        elif bearish_cross and curr["rsi"] <= config.rsi_sell_threshold:
+            working.at[working.index[i], "signal"] = -1
 
-    elif args.mode == "paper":
-        from .paper_trade import PaperTrader
-        bot = PaperTrader(config=config, market_data=data)
-        bot.run(limit=args.limit, use_mock=args.use_mock)
-
-    else:
-        if not config.api_key or not config.api_secret:
-            raise ValueError("For live mode set BROKER_API_KEY and BROKER_API_SECRET or pass --api-key and --api-secret.")
-        broker = get_broker(config)
-        run_live_strategy(config, broker)
+    return working
 
 
-if __name__ == "__main__":
-    main()
+def generate_ict_signals(df: pd.DataFrame, config: StrategyConfig) -> pd.DataFrame:
+    working = df.copy()
+    working["ema_fast"] = ema(working["Close"], config.fast_ema)
+    working["ema_slow"] = ema(working["Close"], config.slow_ema)
+    working["rsi"] = rsi(working["Close"], config.rsi_period)
+    swing_high, swing_low = _compute_swing_levels(working, config.swing_lookback)
+    working["swing_high"] = swing_high
+    working["swing_low"] = swing_low
+    working["signal"] = 0
+
+    for i in range(1, len(working)):
+        prev = working.iloc[i - 1]
+        curr = working.iloc[i]
+        bullish_ict = (
+            curr["Close"] > curr["swing_high"] and
+            curr["rsi"] > config.rsi_buy_threshold and
+            curr["ema_fast"] > curr["ema_slow"]
+        )
+        bearish_ict = (
+            curr["Close"] < curr["swing_low"] and
+            curr["rsi"] < config.rsi_sell_threshold and
+            curr["ema_fast"] < curr["ema_slow"]
+        )
+
+        if bullish_ict:
+            working.at[working.index[i], "signal"] = 1
+        elif bearish_ict:
+            working.at[working.index[i], "signal"] = -1
+
+    return working
+
+
+def generate_smc_signals(df: pd.DataFrame, config: StrategyConfig) -> pd.DataFrame:
+    working = df.copy()
+    working["ema_fast"] = ema(working["Close"], config.fast_ema)
+    working["ema_slow"] = ema(working["Close"], config.slow_ema)
+    working["rsi"] = rsi(working["Close"], config.rsi_period)
+    swing_high, swing_low = _compute_swing_levels(working, config.swing_lookback)
+    working["swing_high"] = swing_high
+    working["swing_low"] = swing_low
+    working["signal"] = 0
+
+    for i in range(1, len(working)):
+        prev = working.iloc[i - 1]
+        curr = working.iloc[i]
+
+        bullish_bos = prev["Close"] <= prev["swing_high"] and curr["Close"] > curr["swing_high"]
+        bearish_bos = prev["Close"] >= prev["swing_low"] and curr["Close"] < curr["swing_low"]
+
+        bullish_smc = bullish_bos and curr["ema_fast"] > curr["ema_slow"] and curr["rsi"] > config.rsi_buy_threshold
+        bearish_smc = bearish_bos and curr["ema_fast"] < curr["ema_slow"] and curr["rsi"] < config.rsi_sell_threshold
+
+        if bullish_smc:
+            working.at[working.index[i], "signal"] = 1
+        elif bearish_smc:
+            working.at[working.index[i], "signal"] = -1
+
+    return working
+
+
+def generate_signals(df: pd.DataFrame, config: StrategyConfig) -> pd.DataFrame:
+    strategy_name = getattr(config, "strategy_name", "ema_rsi")
+    if strategy_name == "ict":
+        return generate_ict_signals(df, config)
+    if strategy_name == "smc":
+        return generate_smc_signals(df, config)
+    return generate_ema_rsi_signals(df, config)
+
+
+def decide_trade(df: pd.DataFrame, config: StrategyConfig) -> str:
+    if df.empty:
+        return "HOLD"
+    last = df.iloc[-1]
+    if last["signal"] > 0:
+        return "BUY"
+    if last["signal"] < 0:
+        return "SELL"
+    return "HOLD"
